@@ -36,7 +36,8 @@ import (
 )
 
 var (
-	policyAnnotation = "net.beta.kubernetes.io/network-policy"
+	policyAnnotation      = "net.beta.kubernetes.io/network-policy"
+	externalSRCAnnotation = "net.beta.kubernetes.io/allowed-external-cidrs"
 )
 
 type namespacePolicy struct {
@@ -261,6 +262,21 @@ func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.K
 	inboundRules := []model.Rule{}
 	for _, r := range np.Spec.Ingress {
 		inboundRules = append(inboundRules, c.k8sIngressRuleToCalico(r, np.ObjectMeta.Namespace)...)
+	}
+	log.Warnf("converting k8s policy %s to calico policy", np.Name)
+
+	if len(np.Annotations) > 0 && len(np.Annotations[externalSRCAnnotation]) > 0 {
+		log.Warnf("external cidr annotation set on network policy %s", np.Annotations[externalSRCAnnotation])
+		_, ipnet, err := cnet.ParseCIDR(np.Annotations[externalSRCAnnotation])
+		if err != nil {
+			log.Panic("Invalid external cidr %s: %s", np.Annotations[externalSRCAnnotation], err)
+			return nil, err
+		}
+		extSrcRule := model.Rule{
+			Action: "allow",
+			SrcNet: ipnet,
+		}
+		inboundRules = append(inboundRules, extSrcRule)
 	}
 
 	// Build and return the KVPair.
