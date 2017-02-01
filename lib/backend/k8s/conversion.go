@@ -266,17 +266,19 @@ func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.K
 	log.Warnf("converting k8s policy %s to calico policy", np.Name)
 
 	if len(np.Annotations) > 0 && len(np.Annotations[externalSRCAnnotation]) > 0 {
-		log.Warnf("external cidr annotation set on network policy %s", np.Annotations[externalSRCAnnotation])
-		_, ipnet, err := cnet.ParseCIDR(np.Annotations[externalSRCAnnotation])
+		log.Infof("external cidr annotation set on network policy %s", np.Annotations[externalSRCAnnotation])
+		cidrs, err := getCIDRsFromAnnotations(np.Annotations[externalSRCAnnotation])
 		if err != nil {
-			log.Panic("Invalid external cidr %s: %s", np.Annotations[externalSRCAnnotation], err)
-			return nil, err
+			log.Errorf("Failed to read allowed cidrs from annotation %s, Err: %v", np.Annotations[externalSRCAnnotation], err)
+			return nil, fmt.Errorf("Failed to read allowed cidrs from annotation %s, Err: %v", np.Annotations[externalSRCAnnotation], err)
 		}
-		extSrcRule := model.Rule{
-			Action: "allow",
-			SrcNet: ipnet,
+		for _, cidr := range cidrs {
+			extSrcRule := model.Rule{
+				Action: "allow",
+				SrcNet: cidr,
+			}
+			inboundRules = append(inboundRules, extSrcRule)
 		}
-		inboundRules = append(inboundRules, extSrcRule)
 	}
 
 	// Build and return the KVPair.
@@ -292,6 +294,15 @@ func (c converter) networkPolicyToPolicy(np *extensions.NetworkPolicy) (*model.K
 		},
 		Revision: np.ObjectMeta.ResourceVersion,
 	}, nil
+}
+
+func getCIDRsFromAnnotations(extCIDRAnnotation string) ([]*cnet.IPNet, error) {
+	var uas model.AddressSet
+	err := json.Unmarshal([]byte(extCIDRAnnotation), &uas)
+	if err != nil {
+		return nil, err
+	}
+	return uas.Sets, nil
 }
 
 // k8sSelectorToCalico takes a namespaced k8s label selector and returns the Calico
